@@ -59,8 +59,16 @@ parser.add_argument('--padding-mode', type=str, choices=['zeros', 'border'], def
                          ' border will only null gradients of the coordinate outside (x or y)')
 parser.add_argument('--with-gt', action='store_true', help='use ground truth for validation. \
                     You need to store it in npy 2D arrays see data/kitti_raw_loader.py for an example')
+# --- W&B flags ---
+parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+parser.add_argument('--wandb_project', type=str, default='endosfm-scarED', help='W&B project name')
+parser.add_argument('--wandb_entity', type=str, default=None, help='W&B entity (team/user); optional')
+parser.add_argument('--wandb_run', type=str, default=None, help='W&B run name (default: args.name + timestamp)')
+parser.add_argument('--wandb_offline', action='store_true', help='Run W&B in offline mode')
+parser.add_argument('--wandb_log_images_every', type=int, default=500, help='Log sample images every N steps (0=off)')
 
 
+wandb_run = None
 best_error = -1
 n_iter = 0
 
@@ -69,8 +77,29 @@ torch.autograd.set_detect_anomaly(True)
 
 
 def main():
-    global best_error, n_iter, device
+    global best_error, n_iter, device, wandb_run  
     args = parser.parse_args()
+    # ---------------- W&B init ----------------
+    wandb_run = None
+    if args.wandb:
+        import os
+        import wandb
+        if args.wandb_offline:
+            os.environ['WANDB_MODE'] = 'offline'
+        run_name = args.wandb_run
+        if run_name is None:
+            from datetime import datetime
+            run_name = f"{args.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        wandb_kwargs = dict(
+            project=args.wandb_project,
+            name=run_name,
+            config=vars(args)
+        )
+        if args.wandb_entity:
+            wandb_kwargs['entity'] = args.wandb_entity
+        wandb_run = wandb.init(**wandb_kwargs)
+    # ------------------------------------------
+
 
     timestamp = datetime.datetime.now().strftime("%m-%d-%H:%M")
     save_path = Path(args.name)
@@ -154,6 +183,11 @@ def main():
     print("=> creating model")
     disp_net = models.DispResNet(args.resnet_layers, args.with_pretrain).to(device)
     pose_net = models.PoseResNet(18, args.with_pretrain).to(device)
+
+    if wandb_run is not None:
+        wandb.watch(disp_net, log='gradients', log_freq=100)
+        wandb.watch(pose_net, log='gradients', log_freq=100)
+
 
     # load parameters
     if args.pretrained_disp:
@@ -288,6 +322,60 @@ def train(args, train_loader, disp_net, pose_net, optimizer, epoch_size, logger,
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        # ------------ W&B: log por step ------------
+        if wandb_run is not None:
+            log_dict = {
+                'train/total_loss': loss.item(),
+                'train/photometric_loss': loss_1.item(),
+                'train/geometry_loss': loss_3.item(),
+                'train/smooth_loss': loss_2.item(),
+                'train/lr': optimizer.param_groups[0]['lr'],
+                'train/epoch': epoch,
+                'train/step': n_iter,
+            }
+            import wandb
+            wandb.log(log_dict, step=n_iter)
+        # -------------------------------------------
+
+        # ---------- W&B: log de imágenes ----------
+        if wandb_run is not None and args.wandb_log_images_every > 0:
+            if n_iter % args.wandb_log_images_every == 0:
+                import torch
+                import wandb
+
+                def to_uint8(img_tensor):
+                    # img_tensor: [B,3,H,W] en [0,1] o [-1,1]; convierte a uint8
+                    x = img_tensor.detach().float().cpu()
+                    if x.min() < 0:  # caso [-1,1]
+                        x = (x + 1) * 0.5
+                    x = (x.clamp(0,1) * 255).to(torch.uint8)
+                    return x
+
+                imgs = {}
+                # target
+                imgs['vis/target'] = wandb.Image(
+                    to_uint8(tgt_img)[0].permute(1,2,0).numpy(), caption='target'
+                )
+                # primera ref (si existe)
+                if isinstance(ref_imgs, list) and len(ref_imgs) > 0:
+                    imgs['vis/ref0'] = wandb.Image(
+                        to_uint8(ref_imgs[0])[0].permute(1,2,0).numpy(), caption='ref0'
+                    )
+                # disparidad (a partir de depth)
+                # tgt_depth es una lista de escalas: [depth_s0, depth_s1, ...]
+                # usamos la de mayor resolución (índice 0), y convertimos a "disp" para visualización
+                with torch.no_grad():
+                    depth0 = tgt_depth[0][0, 0] if tgt_depth[0].dim() == 4 else tgt_depth[0][0]
+                    disp0 = 1.0 / (depth0 + 1e-6)
+                    disp0 = (disp0 - disp0.min()) / (disp0.max() - disp0.min() + 1e-6)
+                    disp0 = (disp0.detach().cpu().numpy() * 255).astype('uint8')
+                imgs['vis/disp0'] = wandb.Image(disp0, caption='disp0')
+
+                wandb.log(imgs, step=n_iter)
+        # ------------------------------------------
+
+
+
 
         # measure elapsed time
         batch_time.update(time.time() - end)
