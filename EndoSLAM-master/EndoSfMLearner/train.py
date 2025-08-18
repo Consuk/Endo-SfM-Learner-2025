@@ -1,7 +1,7 @@
 import argparse
 import time
 import csv
-import datetime
+import datetime as dt
 from path import Path
 
 import numpy as np
@@ -88,8 +88,7 @@ def main():
             os.environ['WANDB_MODE'] = 'offline'
         run_name = args.wandb_run
         if run_name is None:
-            from datetime import datetime
-            run_name = f"{args.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            run_name = f"{args.name}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         wandb_kwargs = dict(
             project=args.wandb_project,
             name=run_name,
@@ -101,7 +100,7 @@ def main():
     # ------------------------------------------
 
 
-    timestamp = datetime.datetime.now().strftime("%m-%d-%H:%M")
+    timestamp = dt.datetime.now().strftime("%m-%d-%H:%M")
     save_path = Path(args.name)
     args.save_path = 'checkpoints'/save_path/timestamp
     print('=> will save everything to {}'.format(args.save_path))
