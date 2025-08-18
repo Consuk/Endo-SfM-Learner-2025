@@ -329,7 +329,6 @@ def train(args, train_loader, disp_net, pose_net, optimizer, epoch_size, logger,
                 'train/geometry_loss': loss_3.item(),
                 'train/smooth_loss': loss_2.item(),
                 'train/lr': optimizer.param_groups[0]['lr'],
-                'train/epoch': epoch,
                 'train/step': n_iter,
             }
             import wandb
