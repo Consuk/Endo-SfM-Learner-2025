@@ -1,6 +1,7 @@
 import torch
 
-from imageio import imread, imsave
+import imageio.v2 as imageio  # evita deprecation y unifica API
+
 # --- compat: reemplazo de scipy.misc.imresize ---
 try:
     from scipy.misc import imresize  # por si acaso existe
@@ -50,25 +51,54 @@ def main():
         return
 
     disp_net = DispResNet(args.resnet_layers, False).to(device)
-    weights = torch.load(args.pretrained)
-    disp_net.load_state_dict(weights['state_dict'])
+    # weights = torch.load(args.pretrained)
+    # disp_net.load_state_dict(weights['state_dict'])
+    weights = torch.load(args.pretrained, map_location=device)
+    state = weights.get('state_dict', weights)  # por si viene plano o con otra clave
+    disp_net.load_state_dict(state, strict=False)
     disp_net.eval()
 
     dataset_dir = Path(args.dataset_dir)
     output_dir = Path(args.output_dir)
     output_dir.makedirs_p()
 
+    # Extensiones a considerar (minúsculas y mayúsculas)
+    exts = list(set(args.img_exts + [e.upper() for e in args.img_exts] + ['jpeg','JPEG']))
+
     if args.dataset_list is not None:
         with open(args.dataset_list, 'r') as f:
-            test_files = [dataset_dir/file for file in f.read().splitlines()]
-    else:
-        test_files = sum([dataset_dir.files('*.{}'.format(ext)) for ext in args.img_exts], [])
+            lines = [l.strip() for l in f if l.strip()]
 
+        test_files = []
+        for l in lines:
+            p = Path(l)
+            # si es relativa, únela a dataset_dir; si es absoluta, úsala tal cual
+            p = (dataset_dir / p) if not p.isabs() else p
+            if p.isdir():
+                # recorrer recursivo
+                for ext in exts:
+                    test_files += list(p.walkfiles(f'*.{ext}'))
+            else:
+                test_files.append(p)
+    else:
+        # sin lista: buscar recursivo en dataset_dir
+        test_files = []
+        for ext in exts:
+            test_files += list(dataset_dir.walkfiles(f'*.{ext}'))
+
+    # ordenar y normalizar a Path
+    test_files = sorted(map(Path, map(str, test_files)))
     print('{} files to test'.format(len(test_files)))
+
 
     for file in tqdm(test_files):
 
-        img = imread(file).astype(np.float32)
+        # img = imread(file).astype(np.float32)
+        # img = imageio.imread(file).astype(np.float32)
+        # Si viene en HxW, conviértelo a HxWx3
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=2)
+
 
         h, w, _ = img.shape
         if (not args.no_resize) and (h != args.img_height or w != args.img_width):
@@ -80,16 +110,42 @@ def main():
 
         output = disp_net(tensor_img)[0]
 
-        file_path, file_ext = file.relpath(args.dataset_dir).splitext()
-        file_name = '-'.join(file_path.splitall())
+        file_path_rel, _ = Path(file).relpath(args.dataset_dir).splitext()
+        file_name = '-'.join(file_path_rel.splitall())
+
+        # Helper para tener RGB uint8 sin alpha
+        def to_rgb8(arr):
+            # arr: HxWx{1,3,4} o HxW
+            if arr.ndim == 2:
+                arr = arr[:, :, None]
+            if arr.shape[2] == 4:
+                arr = arr[..., :3]
+            if arr.shape[2] == 1:
+                arr = np.repeat(arr, 3, axis=2)
+            if arr.dtype != np.uint8:
+                a_min, a_max = float(arr.min()), float(arr.max())
+                rng = (a_max - a_min) if a_max > a_min else 1e-8
+                arr = ((arr - a_min) / rng * 255.0).astype(np.uint8)
+            return arr
 
         if args.output_disp:
-            disp = (255*tensor2array(output, max_value=None, colormap='bone')).astype(np.uint8)
-            imsave(output_dir/'{}_disp{}'.format(file_name, file_ext), np.transpose(disp, (1, 2, 0)))
+            disp = (255 * tensor2array(output, max_value=None, colormap='bone')).astype(np.uint8)  # CxHxW
+            disp_vis = np.transpose(disp, (1, 2, 0))  # HxWxC
+            disp_vis = to_rgb8(disp_vis)
+            out_path_disp = output_dir / f'{file_name}_disp.png'  # fuerza PNG
+            imageio.imwrite(out_path_disp, disp_vis)
+
         if args.output_depth:
-            depth = 1/output
-            depth = (255*tensor2array(depth, max_value=10, colormap='rainbow')).astype(np.uint8)
-            imsave(output_dir/'{}_depth{}'.format(file_name, file_ext), np.transpose(depth, (1, 2, 0)))
+            depth = 1 / output
+            depth_vis = (255 * tensor2array(depth, max_value=10, colormap='rainbow')).astype(np.uint8)  # CxHxW
+            depth_vis = np.transpose(depth_vis, (1, 2, 0))  # HxWxC
+            depth_vis = to_rgb8(depth_vis)
+            out_path_depth = output_dir / f'{file_name}_depth.png'  # fuerza PNG
+            imageio.imwrite(out_path_depth, depth_vis)
+
+            # (Opcional) guardar profundidad métrica cruda como .npy:
+            # np.save(output_dir / f'{file_name}_depth.npy', depth.squeeze().cpu().numpy())
+
 
 
 if __name__ == '__main__':
