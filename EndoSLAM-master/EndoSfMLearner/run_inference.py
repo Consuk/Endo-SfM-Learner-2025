@@ -1,7 +1,19 @@
 import torch
 
 from imageio import imread, imsave
-from scipy.misc import imresize
+# --- compat: reemplazo de scipy.misc.imresize ---
+try:
+    from scipy.misc import imresize  # por si acaso existe
+except Exception:
+    import cv2
+    import numpy as np
+    def imresize(arr, size, interp='bilinear'):
+        # size suele ser (H, W); cv2.resize espera (W, H)
+        h, w = size
+        inter = cv2.INTER_LINEAR if interp in ('bilinear', 'linear') else cv2.INTER_NEAREST
+        return cv2.resize(arr, (w, h), interpolation=inter)
+# --- fin compat ---
+
 import numpy as np
 from path import Path
 import argparse
