@@ -93,19 +93,44 @@ def main():
 
         # img = imread(file).astype(np.float32)
         # img = imageio.imread(file).astype(np.float32)
-        img = imageio.imread(str(file)).astype(np.float32)
-        # Si viene en HxW, conviértelo a HxWx3
+                # 1) Leer imagen
+        img = imageio.imread(str(file))
+
+        # 2) Asegurar 3 canales (RGB)
         if img.ndim == 2:
+            # escala de grises -> repetir a 3 canales
             img = np.stack([img, img, img], axis=2)
+        elif img.ndim == 3:
+            if img.shape[2] == 4:
+                # RGBA -> descartar alfa
+                img = img[..., :3]
+            elif img.shape[2] > 3:
+                # raro (CMYK u otros) -> tomar los 3 primeros
+                img = img[..., :3]
+            elif img.shape[2] == 1:
+                # 1 canal en 3D -> repetir
+                img = np.repeat(img, 3, axis=2)
+        else:
+            raise ValueError(f"Forma de imagen no soportada: {img.shape} en {file}")
 
+        # 3) Convertir a float32 y normalizar rango si viene en uint16/float >255
+        img = img.astype(np.float32, copy=False)
+        if img.max() > 255.0:
+            # normaliza dinámicamente a 0..255
+            m = img.max()
+            if m > 0:
+                img = img * (255.0 / m)
 
+        # 4) Resize si hace falta
         h, w, _ = img.shape
         if (not args.no_resize) and (h != args.img_height or w != args.img_width):
             img = imresize(img, (args.img_height, args.img_width)).astype(np.float32)
-        img = np.transpose(img, (2, 0, 1))
 
+        # 5) CHW y normalización a lo que espera el modelo
+        img = np.transpose(img, (2, 0, 1))  # C,H,W
         tensor_img = torch.from_numpy(img).unsqueeze(0)
-        tensor_img = ((tensor_img/255 - 0.45)/0.225).to(device)
+        tensor_img = ((tensor_img/255.0 - 0.45) / 0.225).to(device)
+
 
         output = disp_net(tensor_img)[0]
 
