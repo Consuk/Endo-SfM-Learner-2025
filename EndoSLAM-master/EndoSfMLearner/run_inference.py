@@ -1,6 +1,8 @@
 import torch
 
-import imageio.v2 as imageio  # evita deprecation y unifica API
+import os
+import imageio.v2 as imageio
+
 
 # --- compat: reemplazo de scipy.misc.imresize ---
 try:
