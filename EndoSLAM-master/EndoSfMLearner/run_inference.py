@@ -96,7 +96,8 @@ def main():
     for file in tqdm(test_files):
 
         # img = imread(file).astype(np.float32)
-        img = imageio.imread(file).astype(np.float32)
+        # img = imageio.imread(file).astype(np.float32)
+        img = imageio.imread(str(file)).astype(np.float32)
         # Si viene en HxW, conviértelo a HxWx3
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=2)
@@ -138,12 +139,19 @@ def main():
             imageio.imwrite(out_path_disp, disp_vis)
 
         if args.output_depth:
-            depth = 1 / output
+            depth = 1 / output  # torch tensor [1,1,H,W] o [1,H,W]
+
+            # --- guarda PROFUNDIDAD NUMÉRICA (.npy) ---
+            depth_np = depth.squeeze().detach().cpu().numpy()   # [H,W]
+            np.save(output_dir / f"{file_name}_depth.npy", depth_np)
+
+            # --- visualización coloreada (PNG) ---
             depth_vis = (255 * tensor2array(depth, max_value=10, colormap='rainbow')).astype(np.uint8)  # CxHxW
             depth_vis = np.transpose(depth_vis, (1, 2, 0))  # HxWxC
             depth_vis = to_rgb8(depth_vis)
-            out_path_depth = output_dir / f'{file_name}_depth.png'  # fuerza PNG
+            out_path_depth = output_dir / f"{file_name}_depth.png"
             imageio.imwrite(out_path_depth, depth_vis)
+
 
             # (Opcional) guardar profundidad métrica cruda como .npy:
             # np.save(output_dir / f'{file_name}_depth.npy', depth.squeeze().cpu().numpy())
