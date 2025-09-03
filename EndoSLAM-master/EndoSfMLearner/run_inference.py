@@ -68,29 +68,25 @@ def main():
     exts = list(set(args.img_exts + [e.upper() for e in args.img_exts] + ['jpeg','JPEG']))
 
     if args.dataset_list is not None:
+        # Cada línea del archivo es una IMAGEN; si es relativa, la unimos a dataset_dir
         with open(args.dataset_list, 'r') as f:
             lines = [l.strip() for l in f if l.strip()]
-
         test_files = []
         for l in lines:
-            p = Path(l)
-            # si es relativa, únela a dataset_dir; si es absoluta, úsala tal cual
-            p = (dataset_dir / p) if not p.isabs() else p
-            if p.isdir():
-                # recorrer recursivo
-                for ext in exts:
-                    test_files += list(p.walkfiles(f'*.{ext}'))
-            else:
-                test_files.append(p)
+            tf = Path(l)
+            if not tf.isabs():
+                tf = dataset_dir / tf
+            test_files.append(tf)
     else:
-        # sin lista: buscar recursivo en dataset_dir
+        # Sin lista: buscar recursivo en dataset_dir por extensiones conocidas
         test_files = []
         for ext in exts:
             test_files += list(dataset_dir.walkfiles(f'*.{ext}'))
 
-    # ordenar y normalizar a Path
+    # ordenar y normalizar a Path (usando path.Path)
     test_files = sorted(map(Path, map(str, test_files)))
     print('{} files to test'.format(len(test_files)))
+
 
 
     for file in tqdm(test_files):
@@ -139,18 +135,13 @@ def main():
             imageio.imwrite(out_path_disp, disp_vis)
 
         if args.output_depth:
-            depth = 1 / output  # torch tensor [1,1,H,W] o [1,H,W]
+            depth = 1 / output
+            np.save(output_dir / f"{file_name}_depth.npy", depth.squeeze().detach().cpu().numpy())
 
-            # --- guarda PROFUNDIDAD NUMÉRICA (.npy) ---
-            depth_np = depth.squeeze().detach().cpu().numpy()   # [H,W]
-            np.save(output_dir / f"{file_name}_depth.npy", depth_np)
+            depth_vis = (255 * tensor2array(depth, max_value=10, colormap='rainbow')).astype(np.uint8)
+            depth_vis = np.transpose(depth_vis, (1, 2, 0))
+            imageio.imwrite(output_dir / f"{file_name}_depth.png", depth_vis)
 
-            # --- visualización coloreada (PNG) ---
-            depth_vis = (255 * tensor2array(depth, max_value=10, colormap='rainbow')).astype(np.uint8)  # CxHxW
-            depth_vis = np.transpose(depth_vis, (1, 2, 0))  # HxWxC
-            depth_vis = to_rgb8(depth_vis)
-            out_path_depth = output_dir / f"{file_name}_depth.png"
-            imageio.imwrite(out_path_depth, depth_vis)
 
 
             # (Opcional) guardar profundidad métrica cruda como .npy:
@@ -160,3 +151,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+Extensione
