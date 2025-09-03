@@ -96,7 +96,7 @@ def main():
     for file in tqdm(test_files):
 
         # img = imread(file).astype(np.float32)
-        # img = imageio.imread(file).astype(np.float32)
+        img = imageio.imread(file).astype(np.float32)
         # Si viene en HxW, conviértelo a HxWx3
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=2)
