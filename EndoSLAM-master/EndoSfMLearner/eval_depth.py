@@ -19,6 +19,20 @@ parser.add_argument("--ratio_name", help="names for saving ratios", type=str)
 ######################################################
 args = parser.parse_args()
 
+def load_npz_depths(path):
+    """Carga un .npz y devuelve el array correcto (data/depths/arr_0)."""
+    f = np.load(path, allow_pickle=True)
+    for k in ["data", "depths", "arr_0"]:
+        if k in f:
+            arr = f[k]
+            break
+    else:
+        # si no hay claves conocidas, toma el primer arreglo
+        first = list(f.keys())[0]
+        arr = f[first]
+    return arr
+
+
 
 def mkdir_if_not_exists(path):
     """Make a directory if it does not exist.
@@ -111,14 +125,27 @@ class DepthEvalEigen():
         pred_depths = np.load(os.path.join(args.pred_depth))
 
         """ Evaluation """
+        # --- Carga de GT robusta ---
         if args.dataset == 'nyu':
-            gt_depths = np.load(args.gt_depth)
+            gt_depths = load_npz_depths(args.gt_depth)   # [N,H,W]
         elif args.dataset == 'kitti':
-            gt_depths = []
+            gts = []
             for gt_f in sorted(Path(args.gt_depth).files("*.npy")):
-                gt_depths.append(np.load(gt_f))
+                gts.append(np.load(gt_f))
+            gt_depths = np.stack(gts, 0) if len(gts) else np.empty((0,))
+
+        # --- Alineación por si difieren en N ---
+        N_pred = pred_depths.shape[0]
+        N_gt   = gt_depths.shape[0] if isinstance(gt_depths, np.ndarray) else len(gt_depths)
+        N = min(N_pred, N_gt)
+        if N_pred != N_gt:
+            print(f"[warn] N pred ({N_pred}) != N gt ({N_gt}); evaluando los primeros {N}.")
+
+        pred_depths = pred_depths[:N]
+        gt_depths   = gt_depths[:N]
 
         pred_depths = self.evaluate_depth(gt_depths, pred_depths, eval_mono=True)
+
 
         """ Save result """
         # create folder for visualization result
@@ -161,57 +188,67 @@ class DepthEvalEigen():
         Args:
             gt_depths (NxHxW): gt depths
             pred_depths (NxHxW): predicted depths
-            split (str): data split for evaluation
-                - depth_eigen
             eval_mono (bool): use median scaling if True
         """
         errors = []
         ratios = []
         resized_pred_depths = []
 
+        # Soporta tanto np.ndarray como listas
+        N = pred_depths.shape[0] if isinstance(pred_depths, np.ndarray) else len(pred_depths)
+
         print("==> Evaluating depth result...")
-        for i in tqdm(range(pred_depths.shape[0])):
-            if pred_depths[i].mean() != -1:
+        for i in tqdm(range(N)):
+            if np.mean(pred_depths[i]) != -1:
                 gt_depth = gt_depths[i]
                 gt_height, gt_width = gt_depth.shape[:2]
 
-                # resizing prediction (based on inverse depth)
-                pred_inv_depth = 1 / (pred_depths[i] + 1e-6)
+                # Resizing basado en DISPARIDAD inversa
+                pred_inv_depth = 1.0 / (pred_depths[i] + 1e-6)
                 pred_inv_depth = cv2.resize(pred_inv_depth, (gt_width, gt_height))
-                pred_depth = 1 / (pred_inv_depth + 1e-6)
+                pred_depth = 1.0 / (pred_inv_depth + 1e-6)
 
+                # Máscara de válidos
                 mask = np.logical_and(gt_depth > self.min_depth, gt_depth < self.max_depth)
+
+                # Recorte KITTI (si aplica)
                 if args.dataset == 'kitti':
-                    gt_height, gt_width = gt_depth.shape
-                    crop = np.array([0.40810811 * gt_height,  0.99189189 * gt_height,
-                                     0.03594771 * gt_width,   0.96405229 * gt_width]).astype(np.int32)
+                    gh, gw = gt_depth.shape
+                    crop = np.array([0.40810811 * gh, 0.99189189 * gh,
+                                    0.03594771 * gw, 0.96405229 * gw]).astype(np.int32)
                     crop_mask = np.zeros(mask.shape)
                     crop_mask[crop[0]:crop[1], crop[2]:crop[3]] = 1
                     mask = np.logical_and(mask, crop_mask)
 
                 val_pred_depth = pred_depth[mask]
-                val_gt_depth = gt_depth[mask]
+                val_gt_depth   = gt_depth[mask]
 
-                # median scaling is used for monocular evaluation
-                ratio = 1
-                if eval_mono:
-                    ratio = np.median(val_gt_depth) / np.median(val_pred_depth)
+                # Median scaling (modo monocular)
+                ratio = 1.0
+                if eval_mono and val_pred_depth.size > 0:
+                    ratio = np.median(val_gt_depth) / (np.median(val_pred_depth) + 1e-6)
                     ratios.append(ratio)
-                    val_pred_depth *= ratio
-                    # val_pred_depth *= 31.289
+                    val_pred_depth = val_pred_depth * ratio
 
+                # Guarda la pred redimensionada (antes de clamping) con el ratio aplicado
                 resized_pred_depths.append(pred_depth * ratio)
 
-                val_pred_depth[val_pred_depth < self.min_depth] = self.min_depth
-                val_pred_depth[val_pred_depth > self.max_depth] = self.max_depth
+                # Clamps de seguridad
+                val_pred_depth = np.clip(val_pred_depth, self.min_depth, self.max_depth)
 
+                # Métricas
                 errors.append(compute_depth_errors(val_gt_depth, val_pred_depth))
 
-        if eval_mono:
+        # Stats de los ratios (si hubo)
+        if eval_mono and len(ratios) > 0:
             ratios = np.array(ratios)
             med = np.median(ratios)
-            print(" Scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(ratios / med)))
-            print(" Scaling ratios | mean: {:0.3f} +- std: {:0.3f}".format(np.mean(ratios), np.std(ratios)))
+            print(" Scaling ratios | med: {:0.3f} | std: {:0.3f}".format(
+                med, np.std(ratios / (med + 1e-6))
+            ))
+            print(" Scaling ratios | mean: {:0.3f} +- std: {:0.3f}".format(
+                np.mean(ratios), np.std(ratios)
+            ))
             if args.ratio_name:
                 np.savetxt(args.ratio_name, ratios, fmt='%.4f')
 
@@ -224,7 +261,8 @@ class DepthEvalEigen():
             print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
             print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
 
-        return resized_pred_depths
+        return np.array(resized_pred_depths, dtype=np.float32)
+
 
 
 eval = DepthEvalEigen()
