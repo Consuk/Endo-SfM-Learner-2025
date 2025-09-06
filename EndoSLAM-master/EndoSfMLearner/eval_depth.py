@@ -15,6 +15,9 @@ parser.add_argument("--gt_depth", required=True, help="gt depth nyu for nyu or f
 parser.add_argument("--vis_dir", help="result directory for saving visualization", type=str)
 parser.add_argument("--img_dir", help="image directory for reading image", type=str)
 parser.add_argument("--ratio_name", help="names for saving ratios", type=str)
+parser.add_argument("--disable_median_scaling", action="store_true",
+                    help="si se activa, NO aplica median scaling (eval monocular sin escalado)")
+
 
 ######################################################
 args = parser.parse_args()
@@ -49,24 +52,28 @@ def compute_depth_errors(gt, pred):
         gt (N): ground truth depth
         pred (N): predicted depth
     """
+    eps = 1e-6
+    pred = np.maximum(pred, eps)
+    gt   = np.maximum(gt,   eps)
+
     thresh = np.maximum((gt / pred), (pred / gt))
     a1 = (thresh < 1.25).mean()
     a2 = (thresh < 1.25 ** 2).mean()
     a3 = (thresh < 1.25 ** 3).mean()
 
-    rmse = (gt - pred) ** 2
-    rmse = np.sqrt(rmse.mean())
-    rmse_log = (np.log(gt) - np.log(pred)) ** 2
-    rmse_log = np.sqrt(rmse_log.mean())
-
-    log10 = np.mean(np.abs((np.log10(gt) - np.log10(pred))))
+    rmse     = np.sqrt(((gt - pred) ** 2).mean())
+    rmse_log = np.sqrt(((np.log(gt) - np.log(pred)) ** 2).mean())
+    log10    = np.mean(np.abs((np.log10(gt) - np.log10(pred))))
 
     abs_rel = np.mean(np.abs(gt - pred) / gt)
-    sq_rel = np.mean(((gt - pred) ** 2) / gt)
+    sq_rel  = np.mean(((gt - pred) ** 2) / gt)
 
+    # Ahora NYU también regresa SQ REL
     if args.dataset == 'nyu':
-        return abs_rel, log10, rmse, a1, a2, a3
+        # abs_rel, sq_rel, rmse, log10, a1, a2, a3 (7 métricas)
+        return abs_rel, sq_rel, rmse, log10, a1, a2, a3
     elif args.dataset == 'kitti':
+        # abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3 (7 métricas)
         return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
 
 
@@ -144,7 +151,8 @@ class DepthEvalEigen():
         pred_depths = pred_depths[:N]
         gt_depths   = gt_depths[:N]
 
-        pred_depths = self.evaluate_depth(gt_depths, pred_depths, eval_mono=True)
+        pred_depths = self.evaluate_depth(gt_depths, pred_depths, eval_mono=not args.disable_median_scaling)
+
 
 
         """ Save result """
@@ -190,6 +198,8 @@ class DepthEvalEigen():
             pred_depths (NxHxW): predicted depths
             eval_mono (bool): use median scaling if True
         """
+        print("   Mono evaluation - using median scaling" if eval_mono else "   Evaluation - NO median scaling")
+
         errors = []
         ratios = []
         resized_pred_depths = []
@@ -262,11 +272,12 @@ class DepthEvalEigen():
         mean_errors = np.array(errors).mean(0)
 
         if args.dataset == 'nyu':
-            print("\n  " + ("{:>8} | " * 6).format("abs_rel", "log10", "rmse", "a1", "a2", "a3"))
-            print(("&{: 8.3f}  " * 6).format(*mean_errors.tolist()) + "\\\\")
+            print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "log10", "a1", "a2", "a3"))
+            print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
         elif args.dataset == 'kitti':
             print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
             print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
+
 
         return np.array(resized_pred_depths, dtype=np.float32)
 
