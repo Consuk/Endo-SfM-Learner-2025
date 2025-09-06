@@ -113,7 +113,7 @@ class DepthEvalEigen():
         self.min_depth = 1e-3
 
         if args.dataset == 'nyu':
-            self.max_depth = 10.
+            self.max_depth = None
         elif args.dataset == 'kitti':
             self.max_depth = 80.
 
@@ -208,10 +208,12 @@ class DepthEvalEigen():
                 pred_inv_depth = cv2.resize(pred_inv_depth, (gt_width, gt_height))
                 pred_depth = 1.0 / (pred_inv_depth + 1e-6)
 
-                # Máscara de válidos
-                mask = np.logical_and(gt_depth > self.min_depth, gt_depth < self.max_depth)
+                # Máscara de válidos: usa solo límite inferior; aplica max solo si no es None
+                mask = gt_depth > self.min_depth
+                if (self.max_depth is not None):
+                    mask &= (gt_depth < self.max_depth)
 
-                # Recorte KITTI (si aplica)
+                # Recorte KITTI (solo si aplica)
                 if args.dataset == 'kitti':
                     gh, gw = gt_depth.shape
                     crop = np.array([0.40810811 * gh, 0.99189189 * gh,
@@ -220,8 +222,13 @@ class DepthEvalEigen():
                     crop_mask[crop[0]:crop[1], crop[2]:crop[3]] = 1
                     mask = np.logical_and(mask, crop_mask)
 
+                # Si no hay píxeles válidos, saltamos este sample para evitar NaNs
+                if not np.any(mask):
+                    continue
+
                 val_pred_depth = pred_depth[mask]
-                val_gt_depth   = gt_depth[mask]
+                val_gt_depth = gt_depth[mask]
+
 
                 # Median scaling (modo monocular)
                 ratio = 1.0
