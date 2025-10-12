@@ -87,13 +87,30 @@ def mean_on_mask(diff, mask):
 
 def compute_smooth_loss(tgt_depths, tgt_img, ref_depths, ref_imgs):
     def get_smooth_loss(disp, img):
+        # Asegurar que disp tenga forma [B, 1, H, W]
+        if disp.dim() == 3:
+            disp = disp.unsqueeze(1)
+        elif disp.dim() == 2:
+            disp = disp.unsqueeze(0).unsqueeze(0)
+
+        if img.dim() == 3:
+            img = img.unsqueeze(0)
+
         mean_disp = disp.mean(2, True).mean(3, True)
         norm_disp = disp / (mean_disp + 1e-7)
-        grad_disp_x = (norm_disp[:, :, :, :-1] - norm_disp[:, :, :, 1:]).abs()
-        grad_disp_y = (norm_disp[:, :, :-1, :] - norm_disp[:, :, 1:, :]).abs()
-        grad_img_x = (img[:, :, :, :-1] - img[:, :, :, 1:]).abs().mean(1, True)
-        grad_img_y = (img[:, :, :-1, :] - img[:, :, 1:, :]).abs().mean(1, True)
-        grad_disp_x *= torch.exp(-grad_img_x)
-        grad_disp_y *= torch.exp(-grad_img_y)
-        return grad_disp_x.mean() + grad_disp_y.mean()
+
+        disp_gradients_x = gradient_x(norm_disp)
+        disp_gradients_y = gradient_y(norm_disp)
+
+        image_gradients_x = gradient_x(img)
+        image_gradients_y = gradient_y(img)
+
+        weights_x = torch.exp(-torch.mean(torch.abs(image_gradients_x), 1, True))
+        weights_y = torch.exp(-torch.mean(torch.abs(image_gradients_y), 1, True))
+
+        smoothness_x = disp_gradients_x * weights_x
+        smoothness_y = disp_gradients_y * weights_y
+
+        return (smoothness_x.abs().mean() + smoothness_y.abs().mean())
+
     return get_smooth_loss(tgt_depths[0], tgt_img)
