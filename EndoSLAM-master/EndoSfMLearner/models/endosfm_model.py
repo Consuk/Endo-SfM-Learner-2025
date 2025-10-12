@@ -5,18 +5,19 @@ from .DispResNet import DispResNet
 from .PoseResNet import PoseResNet
 
 class EndoSfMLearner(nn.Module):
-    """
-    Wrapper que integra DepthNet (DispResNet) + PoseNet (PoseResNet)
-    y expone un forward único compatible con tu train.py.
-    La corrección de iluminación/local affine (A,B) queda opcional.
-    """
-    def __init__(self, num_layers=18, pretrained=True, num_scales=4,
-                 use_brightness_affine=False):
-        super().__init__()
-        self.depth_net = DispResNet(num_layers=num_layers, pretrained=pretrained)
-        self.pose_net  = PoseResNet(num_layers=18, pretrained=pretrained)
-        self.num_scales = num_scales
+    def __init__(self, num_scales=1, pretrained=True, use_brightness_affine=False):
+        super(EndoSfMLearner, self).__init__()
+
+        # Depth network uses ResNet-50
+        self.depth_net = ResnetEncoder(50, pretrained)
+        self.depth_decoder = DepthDecoder(self.depth_net.num_ch_enc, num_output_channels=1, scales=range(num_scales))
+
+        # Pose network uses ResNet-18
+        self.pose_net = PoseResnet(18, pretrained)
+        self.pose_decoder = PoseDecoder(self.pose_net.num_ch_enc, num_input_frames=2)
+
         self.use_brightness_affine = use_brightness_affine
+
 
         if self.use_brightness_affine:
             # Pequeño "decoder" ligero para A (contraste) y B (brillo) a partir de features de pose.

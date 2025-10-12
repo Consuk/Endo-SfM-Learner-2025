@@ -8,10 +8,9 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
-import torchvision.utils as vutils  # ✅ añadido para grid RGB
+import torchvision.utils as vutils  # grid RGB
 import matplotlib
 import matplotlib.cm as cm
-
 
 import models
 import custom_transforms
@@ -69,32 +68,44 @@ parser.add_argument('--wandb_log_images_every', type=int, default=500)
 wandb_run = None
 best_error = -1
 n_iter = 0
+global_step = 0  # step monotónico global para W&B
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_detect_anomaly(True)
 
 
 # --------------------- UTILS ---------------------
 def tensor_to_rgb(img_tensor):
-    """Convierte [B,3,H,W] en imágenes RGB 8-bit."""
+    """Convierte [B,3,H,W] en imagen RGB 8-bit (grid)."""
     img_tensor = img_tensor.detach().cpu().clamp(0, 1)
     grid = vutils.make_grid(img_tensor, nrow=4)
     np_img = (grid.numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
     return np_img
 
 def tensor_to_colormap(disp_tensor, cmap="plasma"):
-    """Convierte mapas de disparidad [B,1,H,W] a colormap RGB 8-bit."""
-    disp_tensor = disp_tensor.detach().cpu().squeeze(1)
-    disp_normalized = (disp_tensor - disp_tensor.min()) / (disp_tensor.max() - disp_tensor.min() + 1e-8)
-    disp_np = disp_normalized.numpy()
-    colored = [cm.get_cmap(cmap)(d)[:, :, :3] for d in disp_np]
-    grid = np.concatenate(colored, axis=1)
-    return (grid * 255).astype(np.uint8)
+    """Convierte mapas de disparidad [B,1,H,W] a colormap RGB 8-bit (concatenado)."""
+    disp = disp_tensor.detach().cpu()
+    if disp.dim() == 4 and disp.size(1) == 1:
+        disp = disp.squeeze(1)
+    elif disp.dim() == 3:
+        pass
+    else:
+        # fallback: intenta interpretar como [B,H,W]
+        disp = disp.view(disp.size(0), disp.size(-2), disp.size(-1))
 
+    # Normalización independiente por imagen para visualizar contraste
+    disp_min = disp.amin(dim=(1, 2), keepdim=True)
+    disp_max = disp.amax(dim=(1, 2), keepdim=True)
+    disp_norm = (disp - disp_min) / (disp_max - disp_min + 1e-8)
+
+    disp_np = disp_norm.numpy()
+    colored = [cm.get_cmap(cmap)(d)[:, :, :3] for d in disp_np]  # lista de [H,W,3]
+    grid = np.concatenate(colored, axis=1)  # concat horizontal
+    return (grid * 255).astype(np.uint8)
 
 
 # --------------------- MAIN ---------------------
 def main():
-    global best_error, n_iter, wandb_run
+    global best_error, n_iter, wandb_run, global_step
     args = parser.parse_args()
 
     # --- W&B init ---
@@ -107,6 +118,9 @@ def main():
         if args.wandb_entity:
             wandb_kwargs['entity'] = args.wandb_entity
         wandb_run = wandb.init(**wandb_kwargs)
+        # Definir métrica de step global para evitar warnings
+        wandb.define_metric("global_step")
+        wandb.define_metric("*", step_metric="global_step")
 
     # --- Setup ---
     timestamp = dt.datetime.now().strftime("%m-%d-%H:%M")
@@ -194,13 +208,24 @@ def main():
 
         with open(args.save_path / args.log_summary, 'a') as csvfile:
             csv.writer(csvfile, delimiter='\t').writerow([train_loss, val_loss])
+
+        # Log por epoch a W&B (curvas)
+        if wandb_run:
+            import wandb
+            wandb.log({
+                "train_loss_epoch": float(train_loss),
+                "val_loss_epoch": float(val_loss),
+                "epoch": int(epoch),
+                "global_step": int(global_step)
+            })
+
     logger.epoch_bar.finish()
 
 
 def train(args, train_loader, model, optimizer, logger, writer, epoch):
-    global n_iter
+    global n_iter, global_step
     import wandb
-    losses = AverageMeter(precision=4)
+    losses = AverageMeter(precision=6)
     w1, w2, w3 = args.photo_loss_weight, args.smooth_loss_weight, args.geometry_consistency_weight
     model.train()
 
@@ -233,16 +258,27 @@ def train(args, train_loader, model, optimizer, logger, writer, epoch):
 
         losses.update(loss.item(), args.batch_size)
 
-        # --- W&B log imágenes a color ---
-        if args.wandb and (i % args.wandb_log_images_every == 0):
-            wandb.log({
-                "Train/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
-                "Train/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
-            }, step=n_iter)
+        # --- W&B log imágenes + loss iterativo ---
+        if wandb_run:
+            if i % args.wandb_log_images_every == 0:
+                wandb.log({
+                    "Train/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
+                    "Train/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
+                    "train_loss_iter": float(loss.item()),
+                    "global_step": int(global_step)
+                })
+            else:
+                wandb.log({
+                    "train_loss_iter": float(loss.item()),
+                    "global_step": int(global_step)
+                })
 
         if i % args.print_freq == 0:
-            logger.train_writer.write(f"Iter {i}: Loss {loss.item():.4f}")
+            logger.train_writer.write(f"Iter {i}: Loss {loss.item():.6f}")
+
         n_iter += 1
+        global_step += 1  # siempre crece (evita warnings W&B)
+
         if args.epoch_size > 0 and i >= args.epoch_size - 1:
             break
     return losses.avg[0]
@@ -250,8 +286,9 @@ def train(args, train_loader, model, optimizer, logger, writer, epoch):
 
 @torch.no_grad()
 def validate(args, val_loader, model, epoch, logger):
+    global global_step
     import wandb
-    losses = AverageMeter(precision=4)
+    losses = AverageMeter(precision=6)
     model.eval()
     for i, batch in enumerate(val_loader):
         if args.dataset == 'scared':
@@ -276,16 +313,26 @@ def validate(args, val_loader, model, epoch, logger):
         total_loss = loss_p + 0.1 * loss_s + 0.5 * loss_g
         losses.update(total_loss.item(), args.batch_size)
 
-        # --- W&B imágenes de validación ---
-        if args.wandb and (i % args.wandb_log_images_every == 0):
-            wandb.log({
-                "Val/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
-                "Val/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
-
-            }, step=epoch)
+        # --- W&B imágenes + loss iterativo de validación ---
+        if wandb_run:
+            if i % args.wandb_log_images_every == 0:
+                wandb.log({
+                    "Val/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
+                    "Val/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
+                    "val_loss_iter": float(total_loss.item()),
+                    "global_step": int(global_step)
+                })
+            else:
+                wandb.log({
+                    "val_loss_iter": float(total_loss.item()),
+                    "global_step": int(global_step)
+                })
 
         if i % args.print_freq == 0:
-            logger.valid_writer.write(f"Val iter {i}: Loss {total_loss.item():.4f}")
+            logger.valid_writer.write(f"Val iter {i}: Loss {total_loss.item():.6f}")
+
+        global_step += 1  # seguir creciendo en validación también
+
     return losses.avg[0]
 
 
