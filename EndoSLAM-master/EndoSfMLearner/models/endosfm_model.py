@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 from .DispResNet import DispResNet
 from .PoseResNet import PoseResNet
+from networks.resnet_encoder import ResnetEncoder
+
 
 class EndoSfMLearner(nn.Module):
     def __init__(self, num_scales=1, pretrained=True, use_brightness_affine=False):
