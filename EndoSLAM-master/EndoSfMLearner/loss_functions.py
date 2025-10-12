@@ -84,6 +84,30 @@ def mean_on_mask(diff, mask):
         return (diff * mask).sum() / mask.sum()
     return torch.tensor(0).float().to(device)
 
+import torch
+import torch.nn.functional as F
+
+def gradient_x(img):
+    """
+    Devuelve el gradiente horizontal (x) de una imagen.
+    Asume forma [B, C, H, W].
+    """
+    # Diferencia de píxeles a lo largo del eje horizontal
+    gx = img[:, :, :, :-1] - img[:, :, :, 1:]
+    # Padding para mantener tamaño
+    gx = F.pad(gx, (0, 1, 0, 0))
+    return gx
+
+def gradient_y(img):
+    """
+    Devuelve el gradiente vertical (y) de una imagen.
+    Asume forma [B, C, H, W].
+    """
+    gy = img[:, :, :-1, :] - img[:, :, 1:, :]
+    gy = F.pad(gy, (0, 0, 0, 1))
+    return gy
+
+
 
 def compute_smooth_loss(tgt_depths, tgt_img, ref_depths, ref_imgs):
     def get_smooth_loss(disp, img):
@@ -92,7 +116,6 @@ def compute_smooth_loss(tgt_depths, tgt_img, ref_depths, ref_imgs):
             disp = disp.unsqueeze(1)
         elif disp.dim() == 2:
             disp = disp.unsqueeze(0).unsqueeze(0)
-
         if img.dim() == 3:
             img = img.unsqueeze(0)
 
