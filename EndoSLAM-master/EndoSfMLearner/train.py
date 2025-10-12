@@ -9,6 +9,9 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
 import torchvision.utils as vutils  # ✅ añadido para grid RGB
+import matplotlib
+import matplotlib.cm as cm
+
 
 import models
 import custom_transforms
@@ -72,11 +75,21 @@ torch.autograd.set_detect_anomaly(True)
 
 # --------------------- UTILS ---------------------
 def tensor_to_rgb(img_tensor):
-    """Convierte tensores [B,3,H,W] en imágenes RGB 8-bit numpy"""
+    """Convierte [B,3,H,W] en imágenes RGB 8-bit."""
     img_tensor = img_tensor.detach().cpu().clamp(0, 1)
     grid = vutils.make_grid(img_tensor, nrow=4)
     np_img = (grid.numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
     return np_img
+
+def tensor_to_colormap(disp_tensor, cmap="plasma"):
+    """Convierte mapas de disparidad [B,1,H,W] a colormap RGB 8-bit."""
+    disp_tensor = disp_tensor.detach().cpu().squeeze(1)
+    disp_normalized = (disp_tensor - disp_tensor.min()) / (disp_tensor.max() - disp_tensor.min() + 1e-8)
+    disp_np = disp_normalized.numpy()
+    colored = [cm.get_cmap(cmap)(d)[:, :, :3] for d in disp_np]
+    grid = np.concatenate(colored, axis=1)
+    return (grid * 255).astype(np.uint8)
+
 
 
 # --------------------- MAIN ---------------------
@@ -224,7 +237,7 @@ def train(args, train_loader, model, optimizer, logger, writer, epoch):
         if args.wandb and (i % args.wandb_log_images_every == 0):
             wandb.log({
                 "Train/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
-                "Train/Pred_Depth": wandb.Image(tensor_to_rgb(tgt_depths[0])),
+                "Train/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
             }, step=n_iter)
 
         if i % args.print_freq == 0:
@@ -267,7 +280,8 @@ def validate(args, val_loader, model, epoch, logger):
         if args.wandb and (i % args.wandb_log_images_every == 0):
             wandb.log({
                 "Val/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
-                "Val/Pred_Depth": wandb.Image(tensor_to_rgb(tgt_depths[0])),
+                "Val/Pred_Depth": wandb.Image(tensor_to_colormap(tgt_depths[0], cmap="plasma")),
+
             }, step=epoch)
 
         if i % args.print_freq == 0:
