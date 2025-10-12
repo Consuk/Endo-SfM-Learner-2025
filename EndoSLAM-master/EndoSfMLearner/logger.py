@@ -18,31 +18,34 @@ class TermLogger(object):
 
         for i in range(10):
             print('')
+
+        # 🧩 Cambiado max_value → maxval
         self.epoch_bar = progressbar.ProgressBar(
-            max_value=n_epochs, fd=Writer(self.t, (0, h-s+e)))
+            maxval=n_epochs, fd=Writer(self.t, (0, h - s + e)))
 
-        self.train_writer = Writer(self.t, (0, h-s+tr))
-        self.train_bar_writer = Writer(self.t, (0, h-s+tr+1))
+        self.train_writer = Writer(self.t, (0, h - s + tr))
+        self.train_bar_writer = Writer(self.t, (0, h - s + tr + 1))
 
-        self.valid_writer = Writer(self.t, (0, h-s+ts))
-        self.valid_bar_writer = Writer(self.t, (0, h-s+ts+1))
+        self.valid_writer = Writer(self.t, (0, h - s + ts))
+        self.valid_bar_writer = Writer(self.t, (0, h - s + ts + 1))
 
         self.reset_train_bar()
         self.reset_valid_bar()
 
     def reset_train_bar(self):
+        # 🧩 Cambiado max_value → maxval
         self.train_bar = progressbar.ProgressBar(
-            max_value=self.train_size, fd=self.train_bar_writer)
+            maxval=self.train_size, fd=self.train_bar_writer)
 
     def reset_valid_bar(self):
+        # 🧩 Cambiado max_value → maxval
         self.valid_bar = progressbar.ProgressBar(
-            max_value=self.valid_size, fd=self.valid_bar_writer)
+            maxval=self.valid_size, fd=self.valid_bar_writer)
 
 
 class Writer(object):
     """Create an object with a write method that writes to a
     specific place on the screen, defined at instantiation.
-
     This is the glue between blessings and progressbar.
     """
 
@@ -72,15 +75,15 @@ class AverageMeter(object):
         self.reset(self.meters)
 
     def reset(self, i):
-        self.val = [0]*i
-        self.avg = [0]*i
-        self.sum = [0]*i
+        self.val = [0] * i
+        self.avg = [0] * i
+        self.sum = [0] * i
         self.count = 0
 
     def update(self, val, n=1):
         if not isinstance(val, list):
             val = [val]
-        assert(len(val) == self.meters)
+        assert (len(val) == self.meters)
         self.count += n
         for i, v in enumerate(val):
             self.val[i] = v
