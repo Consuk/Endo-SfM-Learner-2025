@@ -8,6 +8,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
+import torchvision.utils as vutils  # ✅ añadido para grid RGB
 
 import models
 import custom_transforms
@@ -68,6 +69,16 @@ n_iter = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_detect_anomaly(True)
 
+
+# --------------------- UTILS ---------------------
+def tensor_to_rgb(img_tensor):
+    """Convierte tensores [B,3,H,W] en imágenes RGB 8-bit numpy"""
+    img_tensor = img_tensor.detach().cpu().clamp(0, 1)
+    grid = vutils.make_grid(img_tensor, nrow=4)
+    np_img = (grid.numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
+    return np_img
+
+
 # --------------------- MAIN ---------------------
 def main():
     global best_error, n_iter, wandb_run
@@ -98,7 +109,7 @@ def main():
     training_writer = SummaryWriter(args.save_path)
 
     # --- Dataset ---
-    normalize = custom_transforms.Normalize(mean=[0.45,0.45,0.45], std=[0.225,0.225,0.225])
+    normalize = custom_transforms.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])
     train_transform = custom_transforms.Compose([
         custom_transforms.RandomHorizontalFlip(),
         custom_transforms.RandomScaleCrop(),
@@ -153,7 +164,7 @@ def main():
                                  weight_decay=args.weight_decay)
 
     # --- Logs ---
-    with open(args.save_path/args.log_summary, 'w') as csvfile:
+    with open(args.save_path / args.log_summary, 'w') as csvfile:
         csv.writer(csvfile, delimiter='\t').writerow(['train_loss', 'val_loss'])
 
     logger = TermLogger(n_epochs=args.epochs, train_size=len(train_loader), valid_size=len(val_loader))
@@ -161,20 +172,21 @@ def main():
 
     for epoch in range(args.epochs):
         logger.epoch_bar.update(epoch)
-        train_loss = train(args, train_loader, model, optimizer, logger, training_writer)
+        train_loss = train(args, train_loader, model, optimizer, logger, training_writer, epoch)
         logger.train_writer.write(f' * Avg Train Loss : {train_loss:.3f}')
 
         logger.reset_valid_bar()
         val_loss = validate(args, val_loader, model, epoch, logger)
         logger.valid_writer.write(f' * Avg Val Loss : {val_loss:.3f}')
 
-        with open(args.save_path/args.log_summary, 'a') as csvfile:
+        with open(args.save_path / args.log_summary, 'a') as csvfile:
             csv.writer(csvfile, delimiter='\t').writerow([train_loss, val_loss])
     logger.epoch_bar.finish()
 
 
-def train(args, train_loader, model, optimizer, logger, writer):
+def train(args, train_loader, model, optimizer, logger, writer, epoch):
     global n_iter
+    import wandb
     losses = AverageMeter(precision=4)
     w1, w2, w3 = args.photo_loss_weight, args.smooth_loss_weight, args.geometry_consistency_weight
     model.train()
@@ -183,7 +195,7 @@ def train(args, train_loader, model, optimizer, logger, writer):
         if args.dataset == 'scared':
             inputs = batch
             tgt_img = inputs[("color", 0, 0)].to(device)
-            ref_imgs = [inputs[("color", i, 0)].to(device) for i in [-1, 1] if ("color", i, 0) in inputs]
+            ref_imgs = [inputs[("color", idx, 0)].to(device) for idx in [-1, 1] if ("color", idx, 0) in inputs]
             intrinsics = inputs[("K", 0)].to(device)
         else:
             tgt_img, ref_imgs, intrinsics, _ = batch
@@ -200,13 +212,21 @@ def train(args, train_loader, model, optimizer, logger, writer):
                                                          args.with_mask, args.with_auto_mask,
                                                          args.padding_mode, affine_maps)
         loss_s = compute_smooth_loss(tgt_depths, tgt_img, None, ref_imgs)
-        loss = w1*loss_p + w2*loss_s + w3*loss_g
+        loss = w1 * loss_p + w2 * loss_s + w3 * loss_g
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         losses.update(loss.item(), args.batch_size)
+
+        # --- W&B log imágenes a color ---
+        if args.wandb and (i % args.wandb_log_images_every == 0):
+            wandb.log({
+                "Train/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
+                "Train/Pred_Depth": wandb.Image(tensor_to_rgb(tgt_depths[0])),
+            }, step=n_iter)
+
         if i % args.print_freq == 0:
             logger.train_writer.write(f"Iter {i}: Loss {loss.item():.4f}")
         n_iter += 1
@@ -217,13 +237,14 @@ def train(args, train_loader, model, optimizer, logger, writer):
 
 @torch.no_grad()
 def validate(args, val_loader, model, epoch, logger):
+    import wandb
     losses = AverageMeter(precision=4)
     model.eval()
     for i, batch in enumerate(val_loader):
         if args.dataset == 'scared':
             inputs = batch
             tgt_img = inputs[("color", 0, 0)].to(device)
-            ref_imgs = [inputs[("color", i, 0)].to(device) for i in [-1, 1] if ("color", i, 0) in inputs]
+            ref_imgs = [inputs[("color", idx, 0)].to(device) for idx in [-1, 1] if ("color", idx, 0) in inputs]
             intrinsics = inputs[("K", 0)].to(device)
         else:
             tgt_img, ref_imgs, intrinsics, _ = batch
@@ -232,14 +253,23 @@ def validate(args, val_loader, model, epoch, logger):
 
         outputs = model(tgt_img, ref_imgs)
         tgt_depths, poses, poses_inv = outputs["depth"], outputs["poses"], outputs["poses_inv"]
+
         loss_p, loss_g = compute_photo_and_geometry_loss(tgt_img, ref_imgs, intrinsics,
                                                          tgt_depths, None, poses, poses_inv,
                                                          args.num_scales, args.with_ssim,
                                                          args.with_mask, False,
                                                          args.padding_mode)
         loss_s = compute_smooth_loss(tgt_depths, tgt_img, None, ref_imgs)
-        total_loss = loss_p + 0.1*loss_s + 0.5*loss_g
+        total_loss = loss_p + 0.1 * loss_s + 0.5 * loss_g
         losses.update(total_loss.item(), args.batch_size)
+
+        # --- W&B imágenes de validación ---
+        if args.wandb and (i % args.wandb_log_images_every == 0):
+            wandb.log({
+                "Val/Input_Color": wandb.Image(tensor_to_rgb(tgt_img)),
+                "Val/Pred_Depth": wandb.Image(tensor_to_rgb(tgt_depths[0])),
+            }, step=epoch)
+
         if i % args.print_freq == 0:
             logger.valid_writer.write(f"Val iter {i}: Loss {total_loss.item():.4f}")
     return losses.avg[0]
