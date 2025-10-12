@@ -14,11 +14,11 @@ class SCAREDDataset(MonoDataset):
         super(SCAREDDataset, self).__init__(*args, **kwargs)
         #SCARED Dataset
         self.K = np.array([
-            [0.5389, 0,    0.5023, 0],
-            [0,      0.6736, 0.4993, 0],
-            [0,      0,    1,      0],
-            [0,      0,    0,      1]
+            [0.5389, 0, 0.5023],
+            [0, 0.6736, 0.4993],
+            [0, 0, 1]
         ], dtype=np.float32)
+
         print("K type:", type(self.K), "K shape:", self.K.shape, "K =", self.K)
                 
         #256 / 320
