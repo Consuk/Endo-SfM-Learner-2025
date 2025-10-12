@@ -1,81 +1,70 @@
-# models/endosfm_model.py
 import torch
 import torch.nn as nn
-from .DispResNet import DispResNet
-from .PoseResNet import PoseResNet
-from networks.resnet_encoder import ResnetEncoder
+from models.resnet_encoder import ResnetEncoder
+from models.depth_decoder import DepthDecoder
+from models.pose_cnn import PoseCNN
+from models.pose_decoder import PoseDecoder
 
+# ------------------------------------------------------------
+# EndoSfMLearner baseline (paper configuration, compatible with your repo)
+# Depth: ResNet50   |   Pose: PoseCNN (equivalente a ResNet18 simplificado)
+# Optional A,B affine correction (paper sec. 3.2)
+# ------------------------------------------------------------
 
 class EndoSfMLearner(nn.Module):
-    def __init__(self, num_scales=1, pretrained=True, use_brightness_affine=False):
+    def __init__(self, depth_resnet_layers=50, pose_resnet_layers=18,
+                 pretrained=True, num_scales=1, use_brightness_affine=False):
         super(EndoSfMLearner, self).__init__()
 
-        # Depth network uses ResNet-50
-        self.depth_net = ResnetEncoder(50, pretrained)
-        self.depth_decoder = DepthDecoder(self.depth_net.num_ch_enc, num_output_channels=1, scales=range(num_scales))
-
-        # Pose network uses ResNet-18
-        self.pose_net = PoseResnet(18, pretrained)
-        self.pose_decoder = PoseDecoder(self.pose_net.num_ch_enc, num_input_frames=2)
-
+        self.num_scales = num_scales
         self.use_brightness_affine = use_brightness_affine
 
+        # ----- Depth branch -----
+        self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained)
+        self.depth_decoder = DepthDecoder(self.depth_encoder.num_ch_enc)
 
+        # ----- Pose branch -----
+        # PoseCNN toma concatenación de imágenes (target + ref)
+        self.pose_cnn = PoseCNN(num_input_images=2)
+        self.pose_decoder = PoseDecoder(num_input_features=6)
+
+        # ----- Optional affine correction -----
         if self.use_brightness_affine:
-            # Pequeño "decoder" ligero para A (contraste) y B (brillo) a partir de features de pose.
-            # Mantengo algo simple y barato; si luego quieres, lo movemos a un head más grande.
-            self.affine_head = nn.Sequential(
-                nn.Conv2d(256, 128, 3, padding=1),
+            self.affine_layer = nn.Sequential(
+                nn.Conv2d(3, 32, 3, 1, 1),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(128, 2, 1)  # [A,B] (2 canales)
+                nn.Conv2d(32, 6, 1)
             )
-
-    @torch.no_grad()
-    def _disp_to_depth(self, disp_pyramid):
-        # Tu DispResNet ya devuelve pirámide de disparidades; profundidad = 1/disp
-        depth_pyramid = []
-        for d in disp_pyramid:
-            depth_pyramid.append(1.0 / (d.clamp(min=1e-6)))
-        return depth_pyramid
+        else:
+            self.affine_layer = None
 
     def forward(self, tgt_img, ref_imgs):
-        """
-        Params
-        - tgt_img: (B,3,H,W)
-        - ref_imgs: list de (B,3,H,W), típicamente [I_{t-1}, I_{t+1}]
-        Returns dict:
-            {
-              "disp": [s0..sS], "depth": [s0..sS],
-              "poses":   [(axisangle, trans) por ref],
-              "poses_inv":[(axisangle, trans) inversas],
-              (opc) "affine": {"A": A, "B": B}  # si use_brightness_affine
-            }
-        """
         outputs = {}
 
-        # Depth (pirámide)
-        disp_pyr = self.depth_net(tgt_img)
-        outputs["disp"]  = disp_pyr
-        outputs["depth"] = self._disp_to_depth(disp_pyr)
+        # ---- Depth ----
+        features = self.depth_encoder(tgt_img)
+        disp = self.depth_decoder(features)
+        outputs["depth"] = [disp[("disp", i)] for i in range(self.num_scales)]
 
-        # Poses (t->ref) y (ref->t)
-        poses, poses_inv = [], []
-        for ref in ref_imgs:
-            poses.append(self.pose_net(tgt_img, ref))
-            poses_inv.append(self.pose_net(ref, tgt_img))
-        outputs["poses"] = poses
-        outputs["poses_inv"] = poses_inv
+        # ---- Pose ----
+        poses, poses_inv = self.predict_poses(tgt_img, ref_imgs)
+        outputs["poses"], outputs["poses_inv"] = poses, poses_inv
 
-        # Estimar A,B (opcional): un mapa por escala 0 (resolución de entrada)
+        # ---- Optional illumination correction ----
         if self.use_brightness_affine:
-            # Tomamos features intermedios de PoseResNet (si tu PoseResNet expone features, mejor).
-            # Si no los expone, usamos un proxy: concatenamos tgt y primer ref y extraemos features rápidos.
-            # Para mantener compatibilidad sin tocar PoseResNet, hago un block ligero aquí:
-            x = torch.cat([tgt_img] + ref_imgs, dim=1)  # (B, 3*(1+N), H, W)
-            # Proyección rápida a 256 canales
-            feat = nn.functional.relu(nn.Conv2d(x.size(1), 256, 3, padding=1, bias=False).to(x.device)(x))
-            ab  = self.affine_head(feat)  # (B,2,H,W)
-            A, B = torch.split(ab, 1, dim=1)
-            outputs["affine"] = {"A": A, "B": B}
+            ab = self.affine_layer(tgt_img)
+            a, b = torch.chunk(ab, 2, dim=1)
+            outputs["affine"] = (a, b)
 
         return outputs
+
+    def predict_poses(self, tgt_img, ref_imgs):
+        poses, poses_inv = [], []
+        for ref_img in ref_imgs:
+            # Concatenate target and reference frame
+            input_pair = torch.cat([tgt_img, ref_img], dim=1)
+            pose_feat = self.pose_cnn(input_pair)
+            pose = self.pose_decoder(pose_feat)
+            poses.append(pose)
+            poses_inv.append(-pose)
+        return poses, poses_inv
