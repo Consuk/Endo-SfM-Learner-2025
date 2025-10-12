@@ -12,7 +12,7 @@ import torch.utils.data
 import models
 import custom_transforms
 from utils import tensor2array, save_checkpoint
-from loss_functions import compute_smooth_loss, compute_photo_and_geometry_loss, compute_errors
+from loss_functions import compute_smooth_loss, compute_photo_and_geometry_loss
 from logger import TermLogger, AverageMeter
 from tensorboardX import SummaryWriter
 from models.endosfm_model import EndoSfMLearner
