@@ -181,9 +181,11 @@ def main():
 
     # --- Model ---
     print("=> Creating EndoSfMLearner model")
-    model = EndoSfMLearner(args.resnet_layers, args.with_pretrain,
-                           num_scales=args.num_scales,
-                           use_brightness_affine=args.use_brightness_affine).to(device)
+    model = EndoSfMLearner(
+        num_scales=args.num_scales,
+        pretrained=bool(args.with_pretrain),
+        use_brightness_affine=args.use_brightness_affine
+    ).to(device)
     model = torch.nn.DataParallel(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
