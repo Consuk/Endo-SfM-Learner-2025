@@ -23,7 +23,7 @@ class EndoSfMLearner(nn.Module):
         # ----- Depth branch -----
         self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained)
         self.depth_decoder = DepthDecoder(self.depth_encoder.num_ch_enc)
-        self.pose_encoder = ResnetEncoder(num_layers=resnet_pose, pretrained=with_pretrain)
+        self.pose_encoder = ResnetEncoder(num_layers=pose_resnet_layers, pretrained=True)
 
 
         # ----- Pose branch -----
