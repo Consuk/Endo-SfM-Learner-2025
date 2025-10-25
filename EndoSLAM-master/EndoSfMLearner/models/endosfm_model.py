@@ -21,7 +21,7 @@ class EndoSfMLearner(nn.Module):
         self.use_brightness_affine = use_brightness_affine
 
         # ----- Depth branch -----
-        self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained)
+        self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained, num_input_images=1)
         self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained, num_input_images=1)
         self.pose_encoder = ResnetEncoder(num_layers=pose_resnet_layers, pretrained=True)
 
