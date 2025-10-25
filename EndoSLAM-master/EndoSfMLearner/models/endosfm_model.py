@@ -26,7 +26,8 @@ class EndoSfMLearner(nn.Module):
         # ----- Pose branch -----
         # PoseCNN toma concatenación de imágenes (target + ref)
         self.pose_cnn = PoseCNN(num_input_frames=2)
-        self.pose_decoder = PoseDecoder(num_input_features=6)
+        self.pose_decoder = PoseDecoder(self.pose_encoder.num_ch_enc, num_input_features=6)
+
 
         # ----- Optional affine correction -----
         if self.use_brightness_affine:
