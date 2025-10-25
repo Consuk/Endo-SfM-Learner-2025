@@ -22,7 +22,6 @@ class EndoSfMLearner(nn.Module):
 
         # ----- Depth branch -----
         self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained, num_input_images=1)
-        self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained, num_input_images=1)
         self.pose_encoder = ResnetEncoder(num_layers=pose_resnet_layers, pretrained=True)
 
 
@@ -30,6 +29,8 @@ class EndoSfMLearner(nn.Module):
         # PoseCNN toma concatenación de imágenes (target + ref)
         self.pose_cnn = PoseCNN(num_input_frames=2)
         self.pose_decoder = PoseDecoder(self.pose_encoder.num_ch_enc, num_input_features=6)
+        self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained, num_input_images=1)
+
 
 
         # ----- Optional affine correction -----
