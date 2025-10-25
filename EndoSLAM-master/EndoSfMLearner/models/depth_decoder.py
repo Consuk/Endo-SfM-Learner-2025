@@ -49,9 +49,10 @@ class DepthDecoder(nn.Module):
             self.convs[("upconv", i, 0)] = ConvBlock(num_ch_in, num_ch_out)
 
             # upconv_1
-            num_ch_in = self.num_ch_dec[i]
             if self.use_skips and i > 0:
-                num_ch_in += self.num_ch_enc[i - 1]
+                num_ch_in = self.num_ch_dec[i] + self.num_ch_enc[i - 1]
+            else:
+                num_ch_in = self.num_ch_dec[i]
             num_ch_out = self.num_ch_dec[i]
             self.convs[("upconv", i, 1)] = ConvBlock(num_ch_in, num_ch_out)
 
@@ -60,6 +61,7 @@ class DepthDecoder(nn.Module):
 
         self.decoder = nn.ModuleList(list(self.convs.values()))
         self.sigmoid = nn.Sigmoid()
+
 
     def forward(self, input_features):
         self.outputs = {}
