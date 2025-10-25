@@ -83,7 +83,9 @@ class DepthDecoder(nn.Module):
             x = self.convs[("upconv", i, 0)](x)
             x = [F.interpolate(x, scale_factor=2, mode=self.upsample_mode)]
             if self.use_skips and i > 0:
-                x += [input_features[i - 1]]
+                skip = input_features[i - 1]
+                skip = F.interpolate(skip, size=x[0].shape[-2:], mode='nearest')  # ← alinea tamaños
+                x += [skip]
             x = torch.cat(x, 1)
             x = self.convs[("upconv", i, 1)](x)
             if i in self.scales:
