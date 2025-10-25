@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 
 from collections import OrderedDict
+import torch.nn.functional as F
+
 
 
 class ConvBlock(nn.Module):
@@ -79,7 +81,7 @@ class DepthDecoder(nn.Module):
         x = input_features[-1]
         for i in range(4, -1, -1):
             x = self.convs[("upconv", i, 0)](x)
-            x = [upsample(x)]
+            x = [F.interpolate(x, scale_factor=2, mode=self.upsample_mode)]
             if self.use_skips and i > 0:
                 x += [input_features[i - 1]]
             x = torch.cat(x, 1)
@@ -88,3 +90,4 @@ class DepthDecoder(nn.Module):
                 self.outputs[("disp", i)] = self.sigmoid(self.convs[("dispconv", i)](x))
 
         return self.outputs
+
