@@ -1,31 +1,19 @@
-# Copyright Niantic 2019. Patent Pending. All rights reserved.
-#
-# This software is licensed under the terms of the Monodepth2 licence
-# which allows for non-commercial use only, the full terms of which are made
-# available in the LICENSE file.
-
-from __future__ import absolute_import, division, print_function
-
 import numpy as np
 import torch
 import torch.nn as nn
-
-from collections import OrderedDict
 import torch.nn.functional as F
-
-
+from collections import OrderedDict
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ConvBlock, self).__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, 1, 1),  # kernel_size=3, stride=1, padding=1
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
             nn.ELU(inplace=True)
         )
 
     def forward(self, x):
         return self.conv(x)
-
 
 class Conv3x3(nn.Module):
     def __init__(self, in_channels, out_channels, use_refl=True):
@@ -39,7 +27,6 @@ class Conv3x3(nn.Module):
 
     def forward(self, x):
         return self.conv(self.pad(x))
-
 
 class DepthDecoder(nn.Module):
     def __init__(self, num_ch_enc, scales=range(4), num_output_channels=1, use_skips=True):
@@ -76,24 +63,20 @@ class DepthDecoder(nn.Module):
 
     def forward(self, input_features):
         self.outputs = {}
-
-        # decoder
         x = input_features[-1]
         for i in range(4, -1, -1):
             x = self.convs[("upconv", i, 0)](x)
-            x = [F.interpolate(x, scale_factor=2, mode=self.upsample_mode)]
+            x = F.interpolate(x, scale_factor=2, mode=self.upsample_mode)
 
             if self.use_skips and i > 0 and (i - 1) < len(input_features):
                 skip = input_features[i - 1]
-                skip = F.interpolate(skip, size=x[0].shape[-2:], mode='nearest')
-                x += [skip]
+                skip = F.interpolate(skip, size=x.shape[-2:], mode='nearest')
+                x = torch.cat([x, skip], dim=1)
 
-            x = torch.cat(x, 1)
             x = self.convs[("upconv", i, 1)](x)
 
             if i in self.scales:
-                self.outputs[("disp", i)] = self.sigmoid(self.convs[("dispconv", i)](x))
+                disp = self.sigmoid(self.convs[("dispconv", i)](x))
+                self.outputs[("disp", i)] = disp
 
         return self.outputs
-
-
