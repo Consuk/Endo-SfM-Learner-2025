@@ -4,6 +4,7 @@ from models.resnet_encoder import ResnetEncoder
 from models.depth_decoder import DepthDecoder
 from models.pose_cnn import PoseCNN
 from models.pose_decoder import PoseDecoder
+from models.resnet_encoder import ResnetEncoder
 
 # ------------------------------------------------------------
 # EndoSfMLearner baseline (paper configuration, compatible with your repo)
@@ -22,6 +23,8 @@ class EndoSfMLearner(nn.Module):
         # ----- Depth branch -----
         self.depth_encoder = ResnetEncoder(depth_resnet_layers, pretrained)
         self.depth_decoder = DepthDecoder(self.depth_encoder.num_ch_enc)
+        self.pose_encoder = ResnetEncoder(num_layers=resnet_pose, pretrained=with_pretrain)
+
 
         # ----- Pose branch -----
         # PoseCNN toma concatenación de imágenes (target + ref)
