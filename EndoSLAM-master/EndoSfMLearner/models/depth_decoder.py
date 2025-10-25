@@ -13,6 +13,17 @@ import torch.nn as nn
 from collections import OrderedDict
 
 
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ConvBlock, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),  # kernel_size=3, stride=1, padding=1
+            nn.ELU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
 
 class DepthDecoder(nn.Module):
     def __init__(self, num_ch_enc, scales=range(4), num_output_channels=1, use_skips=True):
