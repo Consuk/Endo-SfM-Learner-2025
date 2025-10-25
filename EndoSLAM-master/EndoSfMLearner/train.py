@@ -58,6 +58,8 @@ parser.add_argument('--wandb', action='store_true')
 parser.add_argument('--wandb_project', type=str, default='endosfm-scarED')
 parser.add_argument('--wandb_entity', type=str, default=None)
 parser.add_argument('--wandb_log_images_every', type=int, default=500)
+parser.add_argument('--use_brightness_affine', action='store_true')
+
 
 wandb_run = None
 n_iter = 0

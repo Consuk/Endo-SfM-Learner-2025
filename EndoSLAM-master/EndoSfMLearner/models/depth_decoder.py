@@ -25,6 +25,20 @@ class ConvBlock(nn.Module):
         return self.conv(x)
 
 
+class Conv3x3(nn.Module):
+    def __init__(self, in_channels, out_channels, use_refl=True):
+        super(Conv3x3, self).__init__()
+        padding = 1
+        if use_refl:
+            self.pad = nn.ReflectionPad2d(padding)
+        else:
+            self.pad = nn.ZeroPad2d(padding)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3)
+
+    def forward(self, x):
+        return self.conv(self.pad(x))
+
+
 class DepthDecoder(nn.Module):
     def __init__(self, num_ch_enc, scales=range(4), num_output_channels=1, use_skips=True):
         super(DepthDecoder, self).__init__()
