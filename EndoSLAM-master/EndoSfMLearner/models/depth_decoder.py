@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 
+def upsample(x):
+    return F.interpolate(x, scale_factor=2, mode='nearest')
+
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ConvBlock, self).__init__()
